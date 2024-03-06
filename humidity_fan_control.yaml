@@ -90,7 +90,8 @@ variables:
   switch_state: "{{ states(fan_switch) }}"
   rising_threshold: !input "rising_threshold"
   falling_threshold: !input "falling_threshold"
-  abs_humid_ref: "{% set h, t = states(reference_humidity_sensor)|float, states(reference_temperature_sensor) %} {% if not h or t == 'unknown' -%} 'unknown' {%- else %} {% set t = t | float %} {{ (h*6.112*2.1674*e**((17.67*t)/(t+243.5))/(t+273.15))|round(2) }} {% endif %}"
-  abs_humid: "{% set h, t = states(humidity_sensor)|float, states(temperature_sensor) %} {% if not h or t == 'unknown' -%} 'unknown' {%- else %} {% set t = t | float %} {{ (h*6.112*2.1674*e**((17.67*t)/(t+243.5))/(t+273.15))|round(2) }} {% endif %}"
-  difference: "{{ abs_humid|float - abs_humid_ref|float }}"
-  mode: "{% if switch_state == 'off' and difference|float > rising_threshold|float %}on{% elif switch_state == '
+  abs_humid_ref: "{% set h, t = states(reference_humidity_sensor)|float, states(reference_temperature_sensor)|float %} {% if not h or t == 'unknown' -%} 'unknown' {%- else %} {{ (h*6.112*2.1674*e**((17.67*t)/(t+243.5))/(t+273.15))|round(2) }} {% endif %}"
+  abs_humid: "{% set h, t = states(humidity_sensor)|float, states(temperature_sensor)|float %} {% if not h or t == 'unknown' -%} 'unknown' {%- else %} {{ (h*6.112*2.1674*e**((17.67*t)/(t+243.5))/(t+273.15))|round(2) }} {% endif %}"
+  difference: "{{ (abs_humid|float - abs_humid_ref|float) }}"
+  mode: "{% if switch_state == 'off' and difference > rising_threshold %}on{% elif switch_state == 'on' and difference < falling_threshold %}off{% else %}{{ switch_state }}{% endif %}"
+mode: single
