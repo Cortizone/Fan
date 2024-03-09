@@ -1,6 +1,6 @@
 blueprint:
   name: Synchronisation des WLED avec l'éclairage de la chambre
-  description: Ajuste les WLED basés sur l'état des lumières de chevet et du plafond avec entrée de couleur hexadécimale et sélection d'effet.
+  description: Ajuste les WLED basés sur l'état des lumières de chevet et du plafond avec entrée de couleur en format RGB et sélection d'effet.
   domain: automation
   input:
     chevet_light:
@@ -18,9 +18,9 @@ blueprint:
       selector:
         entity:
           domain: light
-    wled_color:
-      name: Couleur WLED pour Chevet (ex. #FFA500 pour orange)
-      default: "#FFFFFF"  # Blanc par défaut
+    wled_rgb_color:
+      name: Couleur RGB WLED pour Chevet (ex. 255,255,255 pour blanc)
+      default: "[255, 255, 255]"  # Blanc par défaut
       selector:
         text: {}
     wled_effect:
@@ -77,6 +77,6 @@ action:
             target:
               entity_id: !input 'wled_light'
             data:
-              color: !input 'wled_color'
+              rgb_color: !input 'wled_rgb_color'
               brightness_pct: 100
 mode: restart
