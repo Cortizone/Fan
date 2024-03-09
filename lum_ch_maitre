@@ -1,6 +1,6 @@
 blueprint:
   name: Synchronisation des WLED avec l'éclairage de la chambre
-  description: Ajuste les WLED basés sur l'état des lumières de chevet et du plafond avec sélection de couleur et d'effet.
+  description: Ajuste les WLED basés sur l'état des lumières de chevet et du plafond avec sélection de couleur en hexadécimal et d'effet.
   domain: automation
   input:
     chevet_light:
@@ -20,7 +20,7 @@ blueprint:
           domain: light
     wled_color:
       name: Couleur WLED pour Chevet (format hex, ex., #FFA500 pour orange)
-      default: "#FFFFFF"
+      default: "#FFFFFF"  # Blanc par défaut
       selector:
         text: {}
     wled_effect:
@@ -28,13 +28,13 @@ blueprint:
       selector:
         select:
           options:
-            - "Blink"
-            - "Breathe"
-            - "Color Wipe"
-            - "Sweep Random"
-            - "Static"
-            - "Rainbow"
-            - "Rainbow Cycle"
+            - Blink
+            - Breathe
+            - Color Wipe
+            - Sweep Random
+            - Static
+            - Rainbow
+            - Rainbow Cycle
     segment_id_chevet:
       name: Segment ID pour Chevet
       default: "1,3"
@@ -77,6 +77,6 @@ action:
             target:
               entity_id: !input 'wled_light'
             data:
-              color_name: !input 'wled_color'
+              color: !input 'wled_color'
               brightness_pct: 100
 mode: restart
