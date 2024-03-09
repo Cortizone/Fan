@@ -25,32 +25,32 @@ blueprint:
       name: Couleur WLED pour Chevet
       description: Choisissez une couleur pour les segments WLED lorsque les lumières de chevet sont allumées.
       selector:
-        color:
+        color: {}
     wled_effect:
       name: Effet WLED pour Plafond
       description: Sélectionnez l'effet pour les segments WLED lorsque la lumière du plafond est allumée.
       selector:
         select:
           options:
-            - "Blink"
-            - "Breathe"
-            - "Color Wipe"
-            - "Sweep Random"
-            - "Static"
-            - "Rainbow"
-            - "Rainbow Cycle"
+            - Blink
+            - Breathe
+            - Color Wipe
+            - Sweep Random
+            - Static
+            - Rainbow
+            - Rainbow Cycle
     segment_id_chevet:
       name: IDs des Segments WLED pour Chevet
       description: Sélectionnez les segments WLED à contrôler avec les chevets (séparés par une virgule, ex: 1,3).
       default: "1,3"
       selector:
-        text:
+        text: {}
     segment_id_ceiling:
       name: IDs des Segments WLED pour Plafond
       description: Sélectionnez les segments WLED à contrôler avec le plafond (généralement le complet).
       default: "0"
       selector:
-        text:
+        text: {}
 
 trigger:
   - platform: state
@@ -71,7 +71,7 @@ action:
             data:
               segment_id: !input 'segment_id_ceiling'
               effect: !input 'wled_effect'
-              brightness_pct: 100  # Assumer que la lumière du plafond veut la pleine luminosité pour le WLED.
+              brightness_pct: 100
       - conditions:
           - condition: state
             entity_id: !input 'chevet_light'
@@ -86,5 +86,5 @@ action:
             data:
               segment_id: !input 'segment_id_chevet'
               color: !input 'wled_color'
-              brightness_pct: "{{ state_attr('light.ch.maitre.chevet', 'brightness') | multiply(0.3922) }}"  # Conversion de 0-255 à 0-100%
+              brightness_pct: 50  # Cette valeur est fixe ici mais peut être ajustée ou rendue dynamique selon besoin.
 mode: restart
