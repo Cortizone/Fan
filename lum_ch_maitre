@@ -1,54 +1,47 @@
 blueprint:
-  name: Gestion avancée WLED en fonction des lumières de la chambre
-  description: "Synchronise WLED avec les lumières de chevet ou du plafond, avec priorité au plafond et sélection des effets et couleurs."
+  name: Synchronisation des WLED avec l'éclairage de la chambre
+  description: Ajuste les WLED basés sur l'état des lumières de chevet et du plafond avec sélection de couleur et d'effet.
   domain: automation
   input:
     chevet_light:
-      name: "Lumière de Chevet"
-      description: "Sélectionnez la lumière de chevet."
+      name: Lumière de Chevet
       selector:
         entity:
           domain: light
     ceiling_light:
-      name: "Lumière du Plafond"
-      description: "Sélectionnez la lumière du plafond."
+      name: Lumière du Plafond
       selector:
         entity:
           domain: light
     wled_light:
-      name: "Lumière WLED"
-      description: "Sélectionnez la lumière WLED à contrôler."
+      name: Lumière WLED
       selector:
         entity:
           domain: light
     wled_color:
-      name: "Couleur WLED pour Chevet"
-      description: "Choisissez une couleur pour les segments WLED lorsque les lumières de chevet sont allumées."
+      name: Couleur WLED pour Chevet
       selector:
         color: {}
     wled_effect:
-      name: "Effet WLED pour Plafond"
-      description: "Sélectionnez l'effet pour les segments WLED lorsque la lumière du plafond est allumée."
+      name: Effet WLED pour Plafond
       selector:
         select:
           options:
-            - "Blink"
-            - "Breathe"
-            - "Color Wipe"
-            - "Sweep Random"
-            - "Static"
-            - "Rainbow"
-            - "Rainbow Cycle"
+            - Blink
+            - Breathe
+            - Color Wipe
+            - Sweep Random
+            - Static
+            - Rainbow
+            - Rainbow Cycle
     segment_id_chevet:
-      name: "IDs des Segments WLED pour Chevet"
-      description: "Sélectionnez les segments WLED à contrôler avec les chevets."
-      default: "1,3"
+      name: Segment ID pour Chevet
+      default: 1,3
       selector:
         text: {}
     segment_id_ceiling:
-      name: "IDs des Segments WLED pour Plafond"
-      description: "Sélectionnez les segments WLED à contrôler avec le plafond."
-      default: "0"
+      name: Segment ID pour Plafond
+      default: 0
       selector:
         text: {}
 
@@ -66,25 +59,19 @@ action:
             state: 'on'
         sequence:
           - service: light.turn_on
-            target:
-              entity_id: !input 'wled_light'
             data:
-              segment_id: !input 'segment_id_ceiling'
+              entity_id: !input 'wled_light'
               effect: !input 'wled_effect'
-              brightness_pct: 100
       - conditions:
           - condition: state
             entity_id: !input 'chevet_light'
             state: 'on'
-        sequence:
           - condition: state
             entity_id: !input 'ceiling_light'
             state: 'off'
+        sequence:
           - service: light.turn_on
-            target:
-              entity_id: !input 'wled_light'
             data:
-              segment_id: !input 'segment_id_chevet'
+              entity_id: !input 'wled_light'
               color: !input 'wled_color'
-              brightness: "{{ (state_attr(!input 'chevet_light', 'brightness') | int * 100 / 255) | round }}"
 mode: restart
