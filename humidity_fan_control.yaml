@@ -1,46 +1,46 @@
 blueprint:
-  name: Humidity Management based on relative humidity (%)
-  description: Turn a fan on and off based on the difference between a humidity sensor and a baseline, based on relative humidity.
+  name: Gestion de l'humidité avec Zigbee2MQTT
+  description: Allume et éteint un ventilateur basé sur la différence entre un capteur d'humidité et un seuil de référence, en utilisant des appareils Zigbee via Zigbee2MQTT.
   domain: automation
   input:
     humidity_sensor:
-      name: Humidity Sensor
-      description: A sensor that measures the relative humidity of the area to be vented, for example the shower.
+      name: Capteur d'Humidité
+      description: Un capteur qui mesure l'humidité relative de la zone à ventiler, par exemple la douche.
       selector:
         entity:
           domain: sensor
     reference_humidity_sensor:
-      name: Reference Humidity Sensor
-      description: A sensor that indicates the baseline relative humidity of the area outside of the vented, for example the walkway outside the shower.
+      name: Capteur d'Humidité de Référence
+      description: Un capteur qui indique l'humidité relative de référence de la zone en dehors de la zone ventilée, par exemple le couloir à l'extérieur de la douche.
       selector:
         entity:
           domain: sensor
     fan_switch:
-      name: Fan Switch (Dummy)
-      description: A dummy switch that simulates the fan turning on and off.
+      name: Interrupteur du Ventilateur
+      description: L'interrupteur qui contrôle le ventilateur.
       selector:
         entity:
-          domain: input_boolean
+          domain: switch
     rising_threshold:
-      name: Rising Threshold (%)
-      description: The increase in relative humidity above the reference humidity that must occur before the fan is turned on.
+      name: Seuil d'Augmentation (%)
+      description: L'augmentation de l'humidité relative par rapport à l'humidité de référence qui doit se produire avant que le ventilateur ne soit allumé.
       selector:
         number:
           min: 0
           max: 100
           mode: slider
           step: 1
-      default: 10  # Adjust this to the percentage point increase needed to turn on the fan
+      default: 10
     falling_threshold:
-      name: Falling Threshold (%)
-      description: The decrease in relative humidity below the reference humidity that must occur before the fan is turned off.
+      name: Seuil de Diminution (%)
+      description: La diminution de l'humidité relative par rapport à l'humidité de référence qui doit se produire avant que le ventilateur ne soit éteint.
       selector:
         number:
           min: 0
           max: 100
           mode: slider
           step: 1
-      default: 5   # Adjust this to the percentage point decrease needed to turn off the fan
+      default: 5
 
 trigger:
   - platform: state
@@ -48,36 +48,31 @@ trigger:
   - platform: state
     entity_id: !input "reference_humidity_sensor"
 
-condition:
-  - condition: template
-    value_template: "{{ mode != switch_state }}"
+condition: []
 
 action:
+  - variables:
+      humid_percent: "{{ states(humidity_sensor) | float }}"
+      ref_humid_percent: "{{ states(reference_humidity_sensor) | float }}"
+      difference: "{{ humid_percent - ref_humid_percent }}"
+      fan_state: "{{ states(fan_switch) }}"
+      rising_threshold: !input "rising_threshold"
+      falling_threshold: !input "falling_threshold"
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ mode == 'on' }}"
+            value_template: "{{ fan_state == 'off' and difference > rising_threshold }}"
         sequence:
-          - service: input_boolean.turn_on
+          - service: switch.turn_on
             target:
               entity_id: !input "fan_switch"
       - conditions:
           - condition: template
-            value_template: "{{ mode == 'off' }}"
+            value_template: "{{ fan_state == 'on' and difference < falling_threshold }}"
         sequence:
-          - service: input_boolean.turn_off
+          - service: switch.turn_off
             target:
               entity_id: !input "fan_switch"
 
-variables:
-  humidity_sensor: !input "humidity_sensor"
-  reference_humidity_sensor: !input "reference_humidity_sensor"
-  fan_switch: !input "fan_switch"
-  switch_state: "{{ states(fan_switch) }}"
-  rising_threshold: !input "rising_threshold"
-  falling_threshold: !input "falling_threshold"
-  humid_percent: "{{ states(humidity_sensor) | float }}"
-  ref_humid_percent: "{{ states(reference_humidity_sensor) | float }}"
-  difference: "{{ humid_percent - ref_humid_percent }}"
-  mode: "{% if switch_state == 'off' and difference > rising_threshold %}on{% elif switch_state == 'on' and difference < falling_threshold %}off{% else %}{{ switch_state }}{% endif %}"
 mode: single
+
