@@ -1,0 +1,114 @@
+blueprint:
+  name: Gestion de l'humidité avec cycles jour et nuit
+  description: Ajuste la puissance de l'humidificateur Govee et l'allume/éteint en fonction des niveaux d'humidité cibles pour le jour et la nuit.
+  domain: automation
+  input:
+    govee_humidifier_power:
+      name: Entité de puissance de l'humidificateur Govee H7140
+      description: Sélectionnez l'entité qui contrôle la puissance de l'humidificateur.
+      selector:
+        entity:
+          domain: number
+    govee_humidifier_switch:
+      name: Interrupteur de l'humidificateur Govee H7140
+      description: Sélectionnez l'entité qui contrôle l'alimentation de l'humidificateur.
+      selector:
+        entity:
+          domain: switch
+    humidity_sensor:
+      name: Capteur d'humidité
+      description: Sélectionnez le capteur d'humidité de la pièce.
+      selector:
+        entity:
+          domain: sensor
+    daytime_start:
+      name: Début du jour
+      description: Heure à laquelle commence la période de jour.
+      selector:
+        time:
+    nighttime_start:
+      name: Début de la nuit
+      description: Heure à laquelle commence la période de nuit.
+      selector:
+        time:
+    daytime_humidity_target:
+      name: Humidité cible de jour (%)
+      description: Niveau d'humidité cible pour la période de jour.
+      selector:
+        number:
+          min: 30
+          max: 70
+          mode: slider
+          step: 1
+    nighttime_humidity_target:
+      name: Humidité cible de nuit (%)
+      description: Niveau d'humidité cible pour la période de nuit.
+      selector:
+        number:
+          min: 30
+          max: 70
+          mode: slider
+          step: 1
+
+trigger:
+  - platform: state
+    entity_id: !input "humidity_sensor"
+  - platform: time
+    at: input "daytime_start"
+  - platform: time
+    at: input "nighttime_start"
+
+action:
+  - choose:
+      - conditions:
+          - condition: time
+            after: input "daytime_start"
+            before: input "nighttime_start"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: numeric_state
+                    entity_id: !input "humidity_sensor"
+                    below: !input "daytime_humidity_target"
+                sequence:
+                  - service: switch.turn_on
+                    target:
+                      entity_id: !input "govee_humidifier_switch"
+                  - service: number.set_value
+                    target:
+                      entity_id: !input "govee_humidifier_power"
+                    data:
+                      value: 9  # Mettez la puissance maximale pour augmenter l'humidité plus rapidement.
+              - conditions:
+                  - condition: numeric_state
+                    entity_id: !input "humidity_sensor"
+                    above: !input "daytime_humidity_target"
+                sequence:
+                  - service: number.set_value
+                    target:
+                      entity_id: !input "govee_humidifier_power"
+                    data:
+                      value: 1  # Réduisez la puissance pour diminuer l'humidité.
+      - conditions:
+          - condition: time
+            after: input "nighttime_start"
+            # Si la période de nuit traverse minuit, nous n'utilisons pas 'before'.
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: numeric_state
+                    entity_id: !input "humidity_sensor"
+                    below: !input "nighttime_humidity_target"
+                sequence:
+                  - service: switch.turn_on
+                    target:
+                      entity_id: !input "govee_humidifier_switch"
+                  - service: number.set_value
+                    target:
+                      entity_id: !input "govee_humidifier_power"
+                    data:
+                      value: 9  # Mettez la puissance maximale pour augmenter l'humidité plus rapidement.
+              - conditions:
+                  - condition: numeric_state
+                    entity_id: !input "humidity_sensor"
+                   
