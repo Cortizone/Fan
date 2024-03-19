@@ -25,12 +25,12 @@ blueprint:
       name: Début du jour
       description: Heure à laquelle commence la période de jour.
       selector:
-        time:
+        time: {}
     nighttime_start:
       name: Début de la nuit
       description: Heure à laquelle commence la période de nuit.
       selector:
-        time:
+        time: {}
     daytime_humidity_target:
       name: Humidité cible de jour (%)
       description: Niveau d'humidité cible pour la période de jour.
@@ -50,55 +50,68 @@ blueprint:
           mode: slider
           step: 1
 
+variables:
+  daytime_start: !input 'daytime_start'
+  nighttime_start: !input 'nighttime_start'
+  daytime_humidity_target: !input 'daytime_humidity_target'
+  nighttime_humidity_target: !input 'nighttime_humidity_target'
+
 trigger:
   - platform: state
     entity_id: !input "humidity_sensor"
   - platform: time
-    at: input "daytime_start"
+    at: !input "daytime_start"
   - platform: time
-    at: input "nighttime_start"
+    at: !input "nighttime_start"
 
 action:
   - choose:
       - conditions:
-          - condition: time
-            after: input "daytime_start"
-            before: input "nighttime_start"
-        sequence:
-          - choose:
-              - conditions:
-                  - condition: numeric_state
-                    entity_id: !input "humidity_sensor"
-                    below: !input "daytime_humidity_target"
-                sequence:
-                  - service: switch.turn_on
-                    target:
-                      entity_id: !input "govee_humidifier_switch"
-                  - service: number.set_value
-                    target:
-                      entity_id: !input "govee_humidifier_power"
-                    data:
-                      value: 9  # Mettez la puissance maximale pour augmenter l'humidité plus rapidement.
-              - conditions:
-                  - condition: numeric_state
-                    entity_id: !input "humidity_sensor"
-                    above: !input "daytime_humidity_target"
-                sequence:
-                  - service: number.set_value
-                    target:
-                      entity_id: !input "govee_humidifier_power"
-                    data:
-                      value: 1  # Réduisez la puissance pour diminuer l'humidité.
+          - condition: or
+            conditions:
+              - condition: time
+                after: "{{ daytime_start }}"
+                before: "{{ nighttime_start }}"
+              - condition: time
+                after: "{{ daytime_start }}"
+                weekday:
+                  - mon
+                  - tue
+                  - wed
+                  - thu
+                  - fri
+      sequence:
+        - choose:
+            - conditions:
+                - condition: numeric_state
+                  entity_id: !input "humidity_sensor"
+                  below: "{{ daytime_humidity_target }}"
+              sequence:
+                - service: switch.turn_on
+                  target:
+                    entity_id: !input "govee_humidifier_switch"
+                - service: number.set_value
+                  target:
+                    entity_id: !input "govee_humidifier_power"
+                  data:
+                    value: 9
+            - conditions:
+                - condition: numeric_state
+                  entity_id: !input "humidity_sensor"
+                  above: "{{ daytime_humidity_target }}"
+              sequence:
+                - service: switch.turn_off
+                  target:
+                    entity_id: !input "govee_humidifier_switch"
       - conditions:
           - condition: time
-            after: input "nighttime_start"
-            # Si la période de nuit traverse minuit, nous n'utilisons pas 'before'.
+            after: "{{ nighttime_start }}"
         sequence:
           - choose:
               - conditions:
                   - condition: numeric_state
                     entity_id: !input "humidity_sensor"
-                    below: !input "nighttime_humidity_target"
+                    below: "{{ nighttime_humidity_target }}"
                 sequence:
                   - service: switch.turn_on
                     target:
@@ -107,8 +120,14 @@ action:
                     target:
                       entity_id: !input "govee_humidifier_power"
                     data:
-                      value: 9  # Mettez la puissance maximale pour augmenter l'humidité plus rapidement.
+                      value: 9
               - conditions:
                   - condition: numeric_state
                     entity_id: !input "humidity_sensor"
-                   
+                    above: "{{ nighttime_humidity_target }}"
+                sequence:
+                  - service: switch.turn_off
+                    target:
+                      entity_id: !input "govee_humidifier_switch"
+mode: single
+
