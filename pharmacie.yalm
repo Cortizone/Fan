@@ -1,6 +1,6 @@
 blueprint:
-  name: Contrôle de commutateur basé sur la luminosité
-  description: Allumez ou éteignez le commutateur de la pharmacie en fonction du pourcentage de luminosité du dimmer.
+  name: Contrôle de commutateur basé sur la luminosité et état
+  description: Allumez ou éteignez le commutateur de la pharmacie en fonction du pourcentage de luminosité du dimmer et son état.
   domain: automation
   input:
     commutateur_pharmacie:
@@ -11,7 +11,7 @@ blueprint:
           domain: switch
     lumiere_dimmer:
       name: Lumière avec dimmer
-      description: Entité de la lumière avec dimmer dont les changements de luminosité déclenchent l'automatisation.
+      description: Entité de la lumière avec dimmer dont les changements de luminosité et d'état déclenchent l'automatisation.
       selector:
         entity:
           domain: light
@@ -24,23 +24,20 @@ blueprint:
           min: 0
           max: 100
           unit_of_measurement: '%'
-    seuil_desactivation:
-      name: Seuil de désactivation
-      description: Pourcentage de luminosité en dessous duquel le commutateur de la pharmacie sera éteint.
-      default: 39
-      selector:
-        number:
-          min: 0
-          max: 100
-          unit_of_measurement: '%'
 
 trigger:
   - platform: state
     entity_id: !input lumiere_dimmer
     attribute: brightness
+  - platform: state
+    entity_id: !input lumiere_dimmer
+    to: 'off'
 action:
   - choose:
       - conditions:
+          - condition: state
+            entity_id: !input lumiere_dimmer
+            state: 'on'
           - condition: numeric_state
             entity_id: !input lumiere_dimmer
             attribute: brightness
@@ -50,12 +47,17 @@ action:
             target:
               entity_id: !input commutateur_pharmacie
       - conditions:
-          - condition: numeric_state
-            entity_id: !input lumiere_dimmer
-            attribute: brightness
-            below: !input seuil_desactivation
+          - condition: or
+            conditions:
+              - condition: state
+                entity_id: !input lumiere_dimmer
+                state: 'off'
+              - condition: numeric_state
+                entity_id: !input lumiere_dimmer
+                attribute: brightness
+                below: !input seuil_activation
         sequence:
           - service: switch.turn_off
             target:
               entity_id: !input commutateur_pharmacie
-mode: single
+mode: restart
