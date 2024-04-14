@@ -1,42 +1,33 @@
 blueprint:
-  name: Contrôle de lumière basé sur la luminosité
-  description: Allumez ou éteignez la lumière de la pharmacie en fonction du pourcentage de luminosité du dimmer.
+  name: Contrôle de commutateur basé sur la luminosité
+  description: Allumez ou éteignez le commutateur de la pharmacie en fonction du pourcentage de luminosité du dimmer.
   domain: automation
   input:
-    lumiere_pharmacie:
-      name: Lumière de la pharmacie
-      description: Entité de la lumière de la pharmacie à contrôler.
+    commutateur_pharmacie:
+      name: Commutateur de la pharmacie
+      description: Entité du commutateur de la pharmacie à contrôler.
       selector:
         entity:
-          domain: light
+          domain: switch
     lumiere_dimmer:
       name: Lumière avec dimmer
       description: Entité de la lumière avec dimmer dont les changements de luminosité déclenchent l'automatisation.
       selector:
         entity:
           domain: light
-    seuil_faible_luminosite:
-      name: Seuil de basse luminosité
-      description: Pourcentage de luminosité en dessous duquel la lumière de la pharmacie s'éteindra.
+    seuil_activation:
+      name: Seuil d'activation
+      description: Pourcentage de luminosité au-dessus duquel le commutateur de la pharmacie sera allumé.
       default: 40
       selector:
         number:
           min: 0
           max: 100
           unit_of_measurement: '%'
-    seuil_moyenne_luminosite:
-      name: Seuil de luminosité moyenne
-      description: Pourcentage de luminosité pour allumer la lumière de la pharmacie à luminosité moyenne (128/255).
-      default: 40
-      selector:
-        number:
-          min: 0
-          max: 100
-          unit_of_measurement: '%'
-    seuil_haute_luminosite:
-      name: Seuil de haute luminosité
-      description: Pourcentage de luminosité pour allumer la lumière de la pharmacie à pleine luminosité (255/255).
-      default: 60
+    seuil_desactivation:
+      name: Seuil de désactivation
+      description: Pourcentage de luminosité en dessous duquel le commutateur de la pharmacie sera éteint.
+      default: 39
       selector:
         number:
           min: 0
@@ -53,35 +44,18 @@ action:
           - condition: numeric_state
             entity_id: !input lumiere_dimmer
             attribute: brightness
-            above: !input seuil_haute_luminosite
+            above: !input seuil_activation
         sequence:
-          - service: light.turn_on
+          - service: switch.turn_on
             target:
-              entity_id: !input lumiere_pharmacie
-            data:
-              brightness: 255
+              entity_id: !input commutateur_pharmacie
       - conditions:
           - condition: numeric_state
             entity_id: !input lumiere_dimmer
             attribute: brightness
-            above: !input seuil_moyenne_luminosite
-            below: !input seuil_haute_luminosite
+            below: !input seuil_desactivation
         sequence:
-          - service: light.turn_on
+          - service: switch.turn_off
             target:
-              entity_id: !input lumiere_pharmacie
-            data:
-              brightness: 128
-      - conditions:
-          - condition: state
-            entity_id: !input lumiere_dimmer
-            state: "off"
-          - condition: numeric_state
-            entity_id: !input lumiere_dimmer
-            attribute: brightness
-            below: !input seuil_faible_luminosite
-        sequence:
-          - service: light.turn_off
-            target:
-              entity_id: !input lumiere_pharmacie
+              entity_id: !input commutateur_pharmacie
 mode: single
