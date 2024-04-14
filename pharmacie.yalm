@@ -15,9 +15,9 @@ blueprint:
       selector:
         entity:
           domain: light
-    seuil_activation:
-      name: Seuil d'activation
-      description: Pourcentage de luminosité au-dessus duquel le commutateur de la pharmacie sera allumé.
+    seuil_luminosite:
+      name: Seuil de luminosité
+      description: Pourcentage de luminosité au-dessus duquel le commutateur de la pharmacie sera allumé et en dessous duquel il sera éteint.
       default: 40
       selector:
         number:
@@ -34,19 +34,19 @@ trigger:
     to: 'off'
 action:
   - choose:
-      - conditions:
+      - conditions:  # Condition pour allumer la pharmacie
           - condition: state
             entity_id: !input lumiere_dimmer
             state: 'on'
           - condition: numeric_state
             entity_id: !input lumiere_dimmer
             attribute: brightness
-            above: !input seuil_activation
+            above: !input seuil_luminosite
         sequence:
           - service: switch.turn_on
             target:
               entity_id: !input commutateur_pharmacie
-      - conditions:
+      - conditions:  # Conditions pour éteindre la pharmacie
           - condition: or
             conditions:
               - condition: state
@@ -55,7 +55,7 @@ action:
               - condition: numeric_state
                 entity_id: !input lumiere_dimmer
                 attribute: brightness
-                below: !input seuil_activation
+                below: !input seuil_luminosite
         sequence:
           - service: switch.turn_off
             target:
