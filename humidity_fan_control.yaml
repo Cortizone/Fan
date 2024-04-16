@@ -1,85 +1,102 @@
 blueprint:
-  name: Gestion de l'humidité basée sur l'humidité relative (%)
-  description: Active et désactive un ventilateur en fonction de la différence entre un capteur d'humidité et un seuil de base, basée sur l'humidité relative.
+  name: Contrôle Intelligent du Ventilateur (Simplifié)
+  description: Active ou désactive le ventilateur basé sur des seuils d'humidité, avec options de contrôle manuel et timer.
   domain: automation
   input:
+    fan_switch:
+      name: Commutateur du Ventilateur
+      description: Choisissez le commutateur qui contrôle votre ventilateur.
+      selector:
+        entity:
+          domain: switch
     humidity_sensor:
-      name: Capteur d'humidité
-      description: Un capteur qui mesure l'humidité relative de la zone à ventiler, par exemple la douche.
+      name: Capteur d'Humidité (Zone Ventilée)
+      description: Sélectionnez le capteur qui mesure l'humidité dans la zone où le ventilateur est utilisé.
       selector:
         entity:
           domain: sensor
     reference_humidity_sensor:
-      name: Capteur d'humidité de référence
-      description: Un capteur qui indique l'humidité relative de base de la zone en dehors de la zone ventilée, par exemple le couloir à l'extérieur de la douche.
+      name: Capteur d'Humidité de Référence (Zone Non-Ventilée)
+      description: Sélectionnez un capteur de référence pour comparer l'humidité hors de la zone ventilée.
       selector:
         entity:
           domain: sensor
-    fan_switch:
-      name: Interrupteur du ventilateur
-      description: Un interrupteur qui active ou désactive le ventilateur.
+    manual_override:
+      name: Commande Manuelle
+      description: Interrupteur manuel pour contrôle direct du ventilateur (bascule ON/OFF).
       selector:
         entity:
-          domain: switch
-    rising_threshold:
-      name: Seuil d'augmentation (%)
-      description: L'augmentation de l'humidité relative par rapport à l'humidité de référence qui doit se produire avant que le ventilateur soit activé.
+          domain: input_boolean
+    timer_duration:
+      name: Durée du Timer (en minutes)
+      description: Temps après lequel le ventilateur s'éteindra automatiquement quand activé manuellement.
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: 'minutes'
+    activation_threshold:
+      name: Seuil d'Activation (%)
+      description: L'augmentation d'humidité (%) nécessaire par rapport au capteur de référence pour activer le ventilateur.
+      default: 10
       selector:
         number:
           min: 0
           max: 100
           mode: slider
           step: 1
-      default: 10  # Ajustez ceci au pourcentage d'augmentation nécessaire pour activer le ventilateur
-    falling_threshold:
-      name: Seuil de diminution (%)
-      description: La diminution de l'humidité relative par rapport à l'humidité de référence qui doit se produire avant que le ventilateur soit désactivé.
+    deactivation_threshold:
+      name: Seuil de Désactivation (%)
+      description: La baisse d'humidité (%) nécessaire par rapport au capteur de référence pour désactiver le ventilateur.
+      default: 5
       selector:
         number:
           min: 0
           max: 100
           mode: slider
           step: 1
-      default: 5   # Ajustez ceci au pourcentage de diminution nécessaire pour désactiver le ventilateur
 
 trigger:
   - platform: state
     entity_id: !input "humidity_sensor"
   - platform: state
     entity_id: !input "reference_humidity_sensor"
+  - platform: state
+    entity_id: !input "manual_override"
 
-condition:
-  - condition: template
-    value_template: "{{ mode != switch_state }}"
+condition: []
 
 action:
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ mode == 'on' }}"
+            value_template: "{{ states(manual_override) == 'on' }}"
         sequence:
           - service: switch.turn_on
             target:
               entity_id: !input "fan_switch"
-      - conditions:
-          - condition: template
-            value_template: "{{ mode == 'off' }}"
-        sequence:
+          - delay: "{{ timer_duration | int }}m"
           - service: switch.turn_off
             target:
               entity_id: !input "fan_switch"
-
-variables:
-  humidity_sensor: !input "humidity_sensor"
-  reference_humidity_sensor: !input "reference_humidity_sensor"
-  fan_switch: !input "fan_switch"
-  switch_state: "{{ states(fan_switch) }}"
-  rising_threshold: !input "rising_threshold"
-  falling_threshold: !input "falling_threshold"
-  humid_percent: "{{ states(humidity_sensor) | float }}"
-  ref_humid_percent: "{{ states(reference_humidity_sensor) | float }}"
-  difference: "{{ humid_percent - ref_humid_percent }}"
-  mode: "{% if switch_state == 'off' and difference > rising_threshold %}on{% elif switch_state == 'on' and difference < falling_threshold %}off{% else %}{{ switch_state }}{% endif %}"
-mode: single
-
-
+      - conditions:
+          - condition: template
+            value_template: "{{ states(manual_override) == 'off' }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states('switch.fan_switch') == 'off' and ((states(humidity_sensor) | float) - (states(reference_humidity_sensor) | float) > activation_threshold | int) }}"
+                sequence:
+                  - service: switch.turn_on
+                    target:
+                      entity_id: !input "fan_switch"
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states('switch.fan_switch') == 'on' and ((states(humidity_sensor) | float) - (states(reference_humidity_sensor) | float) < deactivation_threshold | int) }}"
+                sequence:
+                  - service: switch.turn_off
+                    target:
+                      entity_id: !input "fan_switch"
+mode: restart
