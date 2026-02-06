@@ -1,92 +1,207 @@
 blueprint:
-  name: Gestion de l'humidité avec plage horaire spécifique
-  description: Ajuste la puissance de l'humidificateur Govee et l'allume/éteint basé sur l'humidité cible durant une plage horaire spécifiée.
+  name: Humidificateur Govee - 2 cibles + vitesse adaptive (mode stable)
+  description: >
+    Contrôle ON/OFF + vitesse (1-8) selon l'écart à la cible, avec 2 cibles:
+    période active (soir/nuit) et hors période (jour). Gère plage traversant minuit.
+    Mode stable: près de la cible, reste ON à vitesse 1; OFF seulement si dépassement.
   domain: automation
+
   input:
     govee_humidifier_power:
-      name: Entité de puissance de l'humidificateur Govee H7140
-      description: Sélectionnez l'entité qui contrôle la puissance de l'humidificateur.
+      name: Puissance/Vitesse (number) de l'humidificateur Govee (1-8)
       selector:
         entity:
           domain: number
+
     govee_humidifier_switch:
-      name: Interrupteur de l'humidificateur Govee H7140
-      description: Sélectionnez l'entité qui contrôle l'alimentation de l'humidificateur.
+      name: Interrupteur (switch) de l'humidificateur Govee
       selector:
         entity:
           domain: switch
+
     humidity_sensor:
       name: Capteur d'humidité
-      description: Sélectionnez le capteur d'humidité de la pièce.
       selector:
         entity:
           domain: sensor
+
     active_start:
-      name: Heure de début
-      description: Heure à laquelle l'humidificateur commence à être contrôlé.
+      name: Début période active
       selector:
         time: {}
+
     active_end:
-      name: Heure de fin
-      description: Heure à laquelle l'humidificateur cesse d'être contrôlé.
+      name: Fin période active
       selector:
         time: {}
-    humidity_target:
-      name: Humidité cible (%)
-      description: Niveau d'humidité cible pour la période active.
+
+    humidity_target_active:
+      name: Cible humidité - période active (%)
       selector:
         number:
-          min: 30
+          min: 25
           max: 70
           mode: slider
           step: 1
-      default: 50
+      default: 42
+
+    humidity_target_inactive:
+      name: Cible humidité - hors période (%)
+      selector:
+        number:
+          min: 25
+          max: 70
+          mode: slider
+          step: 1
+      default: 35
+
+    # Marges autour de la cible (tu peux laisser par défaut)
+    band_low:
+      name: Zone basse (cible - X) => accélère
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: slider
+          step: 0.5
+      default: 1.0
+
+    band_hold_high:
+      name: Zone de maintien (cible + X) => vitesse 1 (reste ON)
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: slider
+          step: 0.5
+      default: 0.5
+
+    band_off_high:
+      name: Seuil OFF (cible + X) => OFF
+      selector:
+        number:
+          min: 0
+          max: 10
+          mode: slider
+          step: 0.5
+      default: 1.5
+
+    min_change_minutes:
+      name: Min délai entre changements de vitesse (minutes)
+      selector:
+        number:
+          min: 0
+          max: 30
+          mode: slider
+          step: 1
+      default: 3
+
+mode: restart
 
 trigger:
   - platform: state
-    entity_id: !input "humidity_sensor"
+    entity_id: !input humidity_sensor
   - platform: time
-    at: !input "active_start"
+    at: !input active_start
   - platform: time
-    at: !input "active_end"
+    at: !input active_end
+  - platform: time_pattern
+    minutes: "/5"
+
+variables:
+  start: !input active_start
+  end: !input active_end
+
+  h: "{{ states(!input humidity_sensor) | float(0) }}"
+  target_active: !input humidity_target_active
+  target_inactive: !input humidity_target_inactive
+
+  low: !input band_low
+  hold_high: !input band_hold_high
+  off_high: !input band_off_high
+
+  min_change: !input min_change_minutes
+
+  crosses_midnight: "{{ start > end }}"
+
+  is_active: >-
+    {% if not crosses_midnight %}
+      {{ now().strftime('%H:%M:%S') >= start and now().strftime('%H:%M:%S') < end }}
+    {% else %}
+      {{ now().strftime('%H:%M:%S') >= start or  now().strftime('%H:%M:%S') < end }}
+    {% endif %}
+
+  target: "{{ (target_active if is_active else target_inactive) | float }}"
+
+  diff: "{{ (target - h) | float }}"
+
+  # Vitesse en paliers selon l'écart (diff)
+  speed_calc: >-
+    {% set d = diff %}
+    {% if d >= 6 %} 8
+    {% elif d >= 4 %} 6
+    {% elif d >= 2 %} 4
+    {% elif d >= 1 %} 2
+    {% else %} 1
+    {% endif %}
+
+  current_speed: "{{ states(!input govee_humidifier_power) | float(0) | int }}"
+  current_switch: "{{ is_state(!input govee_humidifier_switch, 'on') }}"
+
+  can_change_speed: >-
+    {% set last = state_attr(this.entity_id, 'last_triggered') %}
+    {% if last is none %} true
+    {% else %}
+      {{ (as_timestamp(now()) - as_timestamp(last)) > (min_change * 60) }}
+    {% endif %}
 
 action:
   - choose:
+      # Trop humide -> OFF
       - conditions:
-          - condition: time
-            after: !input "active_start"
-            before: !input "active_end"
-        sequence:
-          - choose:
-              - conditions:
-                  - condition: numeric_state
-                    entity_id: !input "humidity_sensor"
-                    below: !input "humidity_target"
-                sequence:
-                  - service: switch.turn_on
-                    target:
-                      entity_id: !input "govee_humidifier_switch"
-                  - service: number.set_value
-                    target:
-                      entity_id: !input "govee_humidifier_power"
-                    data:
-                      value: 9  # Utilisez la valeur souhaitée pour augmenter l'humidité.
-              - conditions:
-                  - condition: numeric_state
-                    entity_id: !input "humidity_sensor"
-                    above: !input "humidity_target"
-                sequence:
-                  - service: switch.turn_off
-                    target:
-                      entity_id: !input "govee_humidifier_switch"
-      - conditions:
-          - condition: time
-            before: !input "active_start"
-            after: !input "active_end"
+          - condition: template
+            value_template: "{{ h > (target + off_high) }}"
         sequence:
           - service: switch.turn_off
             target:
-              entity_id: !input "govee_humidifier_switch"
-mode: single
+              entity_id: !input govee_humidifier_switch
 
+      # Sous la cible - low -> ON + vitesse adaptative
+      - conditions:
+          - condition: template
+            value_template: "{{ h < (target - low) }}"
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: !input govee_humidifier_switch
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ can_change_speed and (current_speed != (speed_calc | int)) }}"
+                sequence:
+                  - service: number.set_value
+                    target:
+                      entity_id: !input govee_humidifier_power
+                    data:
+                      value: "{{ speed_calc | int }}"
 
+      # Zone proche de la cible -> ON + vitesse 1 (stable)
+      - conditions:
+          - condition: template
+            value_template: "{{ h <= (target + hold_high) }}"
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: !input govee_humidifier_switch
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ can_change_speed and (current_speed != 1) }}"
+                sequence:
+                  - service: number.set_value
+                    target:
+                      entity_id: !input govee_humidifier_power
+                    data:
+                      value: 1
+
+    default: []
