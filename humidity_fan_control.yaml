@@ -1,102 +1,161 @@
 blueprint:
-  name: Contrôle Intelligent du Ventilateur (Simplifié)
-  description: Active ou désactive le ventilateur basé sur des seuils d'humidité, avec options de contrôle manuel et timer.
+  name: Ventilateur SDB – Contrôle Humidité avec Mode Manuel
+  description: >
+    Automatisation pour contrôler un ventilateur de salle de bain en fonction de l'écart d'humidité 
+    entre deux capteurs (zone ventilée vs référence), avec hystérésis, temporisation minimale, 
+    mode manuel via l'interrupteur physique, et prévention des oscillations ON/OFF.
   domain: automation
   input:
     fan_switch:
-      name: Commutateur du Ventilateur
-      description: Choisissez le commutateur qui contrôle votre ventilateur.
+      name: Interrupteur du ventilateur
+      description: Entité switch contrôlant le ventilateur (ex: switch.salle_de_bain)
       selector:
         entity:
           domain: switch
-    humidity_sensor:
-      name: Capteur d'Humidité (Zone Ventilée)
-      description: Sélectionnez le capteur qui mesure l'humidité dans la zone où le ventilateur est utilisé.
+    humidity_sensor_zone:
+      name: Capteur humidité – zone ventilée
+      description: Capteur d'humidité de la pièce ventilée (ex: salle de bain)
       selector:
         entity:
           domain: sensor
-    reference_humidity_sensor:
-      name: Capteur d'Humidité de Référence (Zone Non-Ventilée)
-      description: Sélectionnez un capteur de référence pour comparer l'humidité hors de la zone ventilée.
+          device_class: humidity
+    humidity_sensor_ref:
+      name: Capteur humidité – zone de référence
+      description: Capteur d'humidité de référence (zone non ventilée, ex: sous-sol)
       selector:
         entity:
           domain: sensor
-    manual_override:
-      name: Commande Manuelle
-      description: Interrupteur manuel pour contrôle direct du ventilateur (bascule ON/OFF).
+          device_class: humidity
+    activation_delta:
+      name: Delta d'activation (% HR)
+      description: Écart d'humidité déclenchant l'allumage auto du ventilateur (en points de %HR)
       selector:
-        entity:
-          domain: input_boolean
-    timer_duration:
-      name: Durée du Timer (en minutes)
-      description: Temps après lequel le ventilateur s'éteindra automatiquement quand activé manuellement.
-      default: 20
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: '%'
+          mode: slider
+          step: 1
+      default: 10
+    deactivation_delta:
+      name: Delta de désactivation (% HR)
+      description: Écart d'humidité pour éteindre le ventilateur (en points de %HR, inférieur au delta d'activation)
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: '%'
+          mode: slider
+          step: 1
+      default: 5
+    manual_duration:
+      name: Durée mode manuel (minutes)
+      description: Durée pendant laquelle le ventilateur reste allumé après une activation manuelle
       selector:
         number:
           min: 1
           max: 120
-          unit_of_measurement: 'minutes'
-    activation_threshold:
-      name: Seuil d'Activation (%)
-      description: L'augmentation d'humidité (%) nécessaire par rapport au capteur de référence pour activer le ventilateur.
-      default: 10
+          unit_of_measurement: min
+          mode: box
+          step: 1
+      default: 30
+    min_auto_on_duration:
+      name: Durée minimale ON auto (minutes)
+      description: Durée minimale de fonctionnement continu après activation auto
       selector:
         number:
-          min: 0
-          max: 100
-          mode: slider
+          min: 1
+          max: 60
+          unit_of_measurement: min
+          mode: box
           step: 1
-    deactivation_threshold:
-      name: Seuil de Désactivation (%)
-      description: La baisse d'humidité (%) nécessaire par rapport au capteur de référence pour désactiver le ventilateur.
       default: 5
-      selector:
-        number:
-          min: 0
-          max: 100
-          mode: slider
-          step: 1
 
+# Triggers: changement de l'humidité (zone ou ref) ou changement de l'état du ventilateur
 trigger:
   - platform: state
-    entity_id: !input "humidity_sensor"
+    entity_id: !input humidity_sensor_zone
   - platform: state
-    entity_id: !input "reference_humidity_sensor"
+    entity_id: !input humidity_sensor_ref
   - platform: state
-    entity_id: !input "manual_override"
+    entity_id: !input fan_switch
+    to: 'on'
 
-condition: []
+variables:
+  fan_switch_entity: !input fan_switch
+  hum_zone_entity: !input humidity_sensor_zone
+  hum_ref_entity: !input humidity_sensor_ref
+  activation_delta: !input activation_delta
+  deactivation_delta: !input deactivation_delta
+  manual_duration: !input manual_duration
+  min_auto_on_duration: !input min_auto_on_duration
+
+  # Récupération des états actuels des capteurs d'humidité et du ventilateur
+  hum_zone: "{{ states(hum_zone_entity) }}"
+  hum_ref: "{{ states(hum_ref_entity) }}"
+  fan_state: "{{ states(fan_switch_entity) }}"
+
+  # Calcul de la différence d'humidité (si valeurs disponibles, sinon None)
+  humidity_diff: >-
+    {% if hum_zone not in ['unknown', 'unavailable'] and 
+          hum_ref not in ['unknown', 'unavailable'] %}
+      {{ hum_zone | float - hum_ref | float }}
+    {% else %}
+      {{ none }}
+    {% endif %}
+
+  # Durée (en secondes) écoulée depuis le dernier changement d'état du ventilateur
+  fan_last_changed_sec: >-
+    {% if states[fan_switch_entity] is not none %}
+      {{ (now() | as_timestamp) - (states[fan_switch_entity].last_changed | as_timestamp) }}
+    {% else %}
+      0
+    {% endif %}
+
+  # Conditions booléennes pré-calculées pour faciliter la lecture dans choose:
+  auto_on_condition: >-
+    {{ humidity_diff is not none and humidity_diff|float > activation_delta|float 
+       and fan_state == 'off' 
+       and fan_last_changed_sec > 60 }}    # cooldown 60s après extinction
+  auto_off_condition: >-
+    {{ humidity_diff is not none and humidity_diff|float < deactivation_delta|float 
+       and fan_state == 'on' 
+       and fan_last_changed_sec >= (min_auto_on_duration|float * 60) }}  # min ON duration écoulée
+
+  # Détection d'une activation manuelle (interrupteur tourné ON par l'utilisateur)
+  manual_triggered: >-
+    {{ trigger.entity_id == fan_switch_entity and trigger.to_state.state == 'on' 
+       and (trigger.to_state.context.parent_id is none or trigger.to_state.context.parent_id == '') }} 
+
+mode: single  # Un seul flux à la fois (évite les courses entre triggers)
 
 action:
   - choose:
-      - conditions:
-          - condition: template
-            value_template: "{{ states(manual_override) == 'on' }}"
+      # —— Cas 1 : Activation manuelle détectée —————————————
+      - conditions: "{{ manual_triggered }}"
         sequence:
-          - service: switch.turn_on
-            target:
-              entity_id: !input "fan_switch"
-          - delay: "{{ timer_duration | int }}m"
-          - service: switch.turn_off
-            target:
-              entity_id: !input "fan_switch"
-      - conditions:
-          - condition: template
-            value_template: "{{ states(manual_override) == 'off' }}"
-        sequence:
+          # Allumage manuel: démarrer le minuteur (manual_duration minutes) avant extinction auto
+          - delay: "{{ manual_duration | int * 60 }}"
           - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states('switch.fan_switch') == 'off' and ((states(humidity_sensor) | float) - (states(reference_humidity_sensor) | float) > activation_threshold | int) }}"
-                sequence:
-                  - service: switch.turn_on
-                    target:
-                      entity_id: !input "fan_switch"
-              - conditions:
-                  - condition: template
-                    value_template: "{{ states('switch.fan_switch') == 'on' and ((states(humidity_sensor) | float) - (states(reference_humidity_sensor) | float) < deactivation_threshold | int) }}"
+              # Si, à l'issue du délai, le ventilateur est toujours allumé, on l'éteint automatiquement.
+              - conditions: "{{ is_state(fan_switch_entity, 'on') }}"
                 sequence:
                   - service: switch.turn_off
                     target:
-                      entity_id: !input "fan_switch"
-mode: restart
+                      entity_id: !input fan_switch
+
+      # —— Cas 2 : Activation automatique (humidité haute) ——————
+      - conditions: "{{ auto_on_condition }}"
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: !input fan_switch
+
+      # —— Cas 3 : Désactivation automatique (humidité basse) ————
+      - conditions: "{{ auto_off_condition }}"
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: !input fan_switch
+
+    default: []
