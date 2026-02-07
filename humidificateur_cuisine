@@ -1,81 +1,172 @@
 blueprint:
-  name: Humidificateur adaptatif (capteur externe)
-  description: >-
-    Pilote un humidificateur VeSync Classic300S avec un capteur externe. Active
-    ou désactive l'humidificateur et règle le niveau de brume selon l'humidité mesurée.
+  name: "VeSync Classic300S (capteur externe) - Cible + mist adaptatif"
+  description: >
+    Pilote un humidificateur VeSync via un capteur d'humidité externe (ex: moyenne/median).
+    - Trop sec: ON + mist haut
+    - Près de la cible: ON + mist bas (stable)
+    - Trop humide: OFF
   domain: automation
+
   input:
     capteur_humidite:
-      name: Capteur d'humidité
-      description: Capteur d'humidité externe (entité sensor).
+      name: "Capteur d'humidité externe"
       selector:
         entity:
           domain: sensor
+
     humidificateur:
-      name: Humidificateur VeSync
-      description: Entité humidificateur VeSync Classic300S.
+      name: "Humidificateur VeSync"
       selector:
         entity:
           domain: humidifier
+
     humidite_cible:
-      name: Humidité cible (%)
-      description: Valeur cible d'humidité relative à maintenir.
+      name: "Humidité cible (%)"
       default: 45
       selector:
         number:
-          min: 0
-          max: 100
-          unit_of_measurement: '%'
-    tolerance_basse:
-      name: Écart bas (%)
-      description: Seuil en-dessous de la cible pour augmenter la vitesse.
+          min: 25
+          max: 70
+          step: 1
+          mode: slider
+          unit_of_measurement: "%"
+
+    seuil_bas:
+      name: "Seuil bas (cible - X) => mist haut"
       default: 2
       selector:
         number:
           min: 0
-          max: 100
-          unit_of_measurement: '%'
-    tolerance_haute:
-      name: Écart haut (%)
-      description: Seuil au-dessus de la cible pour arrêter l'humidificateur.
-      default: 5
+          max: 10
+          step: 0.5
+          mode: slider
+          unit_of_measurement: "%"
+
+    seuil_haut:
+      name: "Seuil haut (cible + X) => OFF"
+      default: 2
       selector:
         number:
           min: 0
-          max: 100
-          unit_of_measurement: '%'
-    delai_anti_flapping:
-      name: Délai anti-flapping
-      description: Durée minimale entre changements d'état pour éviter les oscillations.
-      default: 00:05:00
+          max: 10
+          step: 0.5
+          mode: slider
+          unit_of_measurement: "%"
+
+    mist_haut:
+      name: "Mist haut (ex: 9)"
+      default: 9
       selector:
-        duration: {}
+        number:
+          min: 1
+          max: 9
+          step: 1
+          mode: slider
+
+    mist_bas:
+      name: "Mist bas (ex: 1)"
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 9
+          step: 1
+          mode: slider
+
+    poll_minutes:
+      name: "Vérification périodique (minutes)"
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 15
+          step: 1
+          mode: slider
+          unit_of_measurement: "min"
+
+mode: restart
+
 trigger:
   - platform: state
     entity_id: !input capteur_humidite
-    # (optionnel : ajouter `for: !input delai_anti_flapping` pour la stabilité)
-condition: []
+  - platform: time_pattern
+    minutes: "/1"
+
+variables:
+  s: !input capteur_humidite
+  h_raw: "{{ states(s) }}"
+  h: >-
+    {% if h_raw in ['unknown','unavailable','none',''] %}
+      {{ none }}
+    {% else %}
+      {{ h_raw | float(none) }}
+    {% endif %}
+
+  target: !input humidite_cible
+  low: !input seuil_bas
+  high: !input seuil_haut
+  mist_hi: !input mist_haut
+  mist_lo: !input mist_bas
+
+  poll: !input poll_minutes
+  time_tick_ok: >-
+    {% if trigger.platform != 'time_pattern' %}
+      true
+    {% else %}
+      {{ (now().minute % (poll | int)) == 0 }}
+    {% endif %}
+
+condition:
+  - condition: template
+    value_template: "{{ time_tick_ok }}"
+
 action:
-  - variables:
-      target: !input humidite_cible
-      tol_basse: !input tolerance_basse
-      tol_haute: !input tolerance_haute
-      diff: "{{ (target | float) - (trigger.to_state.state | float) }}"
+  # Si capteur invalide -> on ne fait rien
   - choose:
       - conditions:
-          - "{{ diff >= tol_basse }}"
-        sequence:
-          - service: humidifier.set_mist_level
-            target: !input humidificateur
-            data:
-              mist_level: 9
+          - condition: template
+            value_template: "{{ h is none }}"
+        sequence: []
+    default: []
+
+  - choose:
+      # Trop humide -> OFF
       - conditions:
-          - "{{ diff > - tol_haute }}"
+          - condition: template
+            value_template: "{{ (h | float) >= ((target | float) + (high | float)) }}"
         sequence:
-          - service: humidifier.set_mist_level
-            target: !input humidificateur
-            data:
-              mist_level: 1
-      - default:
           - service: humidifier.turn_off
-            target: !input humidificateur
+            target:
+              entity_id: !input humidificateur
+
+      # Trop sec -> ON + mist haut
+      - conditions:
+          - condition: template
+            value_template: "{{ (h | float) <= ((target | float) - (low | float)) }}"
+        sequence:
+          - service: humidifier.turn_on
+            target:
+              entity_id: !input humidificateur
+          - service: humidifier.set_mist_level
+            target:
+              entity_id: !input humidificateur
+            data:
+              mist_level: !input mist_haut
+
+      # Zone stable -> ON + mist bas
+      - conditions:
+          - condition: template
+            value_template: >-
+              {{ (h | float) > ((target | float) - (low | float)) and
+                 (h | float) < ((target | float) + (high | float)) }}
+        sequence:
+          - service: humidifier.turn_on
+            target:
+              entity_id: !input humidificateur
+          - service: humidifier.set_mist_level
+            target:
+              entity_id: !input humidificateur
+            data:
+              mist_level: !input mist_bas
+
+    default: []
