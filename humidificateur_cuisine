@@ -1,0 +1,272 @@
+################################################################################
+# BLUEPRINT – VeSync Classic300S (humidifier entity) contrôlé par capteur externe
+# Objectif:
+# - 1 seule cible (pas d'horaire)
+# - Capteur d’humidité EXTERNE (ex: moyenne de capteurs) pour éviter le biais du lavabo
+# - Mode stable: près de la cible => ON + mist au minimum
+# - OFF seulement si trop humide
+# - Vitesse (mist level) adaptée selon l’écart, avec anti-flapping
+################################################################################
+
+blueprint:
+  name: Humidificateur VeSync (capteur externe) - Cible + mist adaptive (stable)
+  description: >
+    Contrôle un humidificateur VeSync (ex: Classic300S) en se basant sur un capteur d'humidité externe.
+    - ON + mist adaptée si trop sec
+    - Zone stable: reste ON au mist min près de la cible
+    - OFF seulement si dépassement (cible + seuil)
+    - Anti-flapping: délai minimum entre changements de mist (last_changed du number)
+  domain: automation
+
+  input:
+    humidifier_entity:
+      name: Humidificateur (entity humidifier)
+      selector:
+        entity:
+          domain: humidifier
+
+    mist_level_entity:
+      name: Mist level (number) de l'humidificateur
+      description: "Ex: number.cuisine_humidificateur_mist_level"
+      selector:
+        entity:
+          domain: number
+
+    humidity_sensor:
+      name: Capteur d'humidité externe (peut être une moyenne)
+      selector:
+        entity:
+          domain: sensor
+
+    humidity_target:
+      name: Cible humidité (%)
+      default: 45
+      selector:
+        number:
+          min: 25
+          max: 70
+          mode: slider
+          step: 1
+
+    band_low:
+      name: Seuil bas (cible - X) => accélère
+      default: 1.0
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: slider
+          step: 0.5
+
+    band_hold_high:
+      name: Zone stable (cible + X) => mist min (reste ON)
+      default: 0.5
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: slider
+          step: 0.5
+
+    band_off_high:
+      name: Seuil OFF (cible + X) => OFF
+      default: 1.5
+      selector:
+        number:
+          min: 0
+          max: 10
+          mode: slider
+          step: 0.5
+
+    mist_min:
+      name: Mist minimum (ex: 1)
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 1
+          mode: slider
+
+    mist_max:
+      name: Mist maximum (ex: 9)
+      default: 9
+      selector:
+        number:
+          min: 1
+          max: 10
+          step: 1
+          mode: slider
+
+    min_change_minutes:
+      name: Délai min entre changements de mist (minutes)
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 30
+          mode: slider
+          step: 1
+
+    poll_minutes:
+      name: Vérification périodique (minutes)
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 15
+          mode: slider
+          step: 1
+
+mode: restart
+
+trigger:
+  - platform: state
+    entity_id: !input humidity_sensor
+  - platform: time_pattern
+    minutes: "/1"
+
+variables:
+  humidifier: !input humidifier_entity
+  mist_entity: !input mist_level_entity
+  hum_sensor: !input humidity_sensor
+
+  target: !input humidity_target
+  low: !input band_low
+  hold_high: !input band_hold_high
+  off_high: !input band_off_high
+
+  mist_min_in: !input mist_min
+  mist_max_in: !input mist_max
+
+  min_change: !input min_change_minutes
+  poll: !input poll_minutes
+
+  # Lecture humidité externe (protège unknown/unavailable)
+  h_raw: "{{ states(hum_sensor) }}"
+  h: >-
+    {% if h_raw in ['unknown','unavailable','none',''] %}
+      {{ none }}
+    {% else %}
+      {{ h_raw | float(none) }}
+    {% endif %}
+
+  # Tick périodique seulement aux X minutes
+  time_tick_ok: >-
+    {% if trigger.platform != 'time_pattern' %}
+      true
+    {% else %}
+      {{ (now().minute % (poll | int)) == 0 }}
+    {% endif %}
+
+  is_on: "{{ is_state(humidifier, 'on') }}"
+
+  # Anti-flap mist basé sur last_changed du number
+  mist_cooldown_ok: >-
+    {% set obj = states[mist_entity] %}
+    {% if obj is none or obj.last_changed is none %}
+      true
+    {% else %}
+      {{ (as_timestamp(now()) - as_timestamp(obj.last_changed)) > (min_change * 60) }}
+    {% endif %}
+
+  current_mist: "{{ states(mist_entity) | float(0) | int }}"
+
+  # Bornes mist propres
+  mist_min: "{{ mist_min_in | int }}"
+  mist_max: "{{ [mist_max_in | int, mist_min_in | int] | max }}"
+
+  diff: >-
+    {% if h is none %}
+      {{ none }}
+    {% else %}
+      {{ (target | float) - (h | float) }}
+    {% endif %}
+
+  # Mist calculé (paliers proportionnels à mist_max)
+  # diff >= 6 -> max
+  # 4-6 -> 75%
+  # 2-4 -> 50%
+  # 1-2 -> 25%
+  # <1 -> min
+  mist_calc: >-
+    {% if diff is none %}
+      {{ mist_min }}
+    {% else %}
+      {% set d = diff | float %}
+      {% set span = (mist_max - mist_min) | int %}
+      {% if d >= 6 %}
+        {{ mist_max }}
+      {% elif d >= 4 %}
+        {{ mist_min + (span * 0.75) | round(0, 'half_up') | int }}
+      {% elif d >= 2 %}
+        {{ mist_min + (span * 0.50) | round(0, 'half_up') | int }}
+      {% elif d >= 1 %}
+        {{ mist_min + (span * 0.25) | round(0, 'half_up') | int }}
+      {% else %}
+        {{ mist_min }}
+      {% endif %}
+    {% endif %}
+
+condition:
+  - condition: template
+    value_template: "{{ time_tick_ok }}"
+
+action:
+  # Si humidité invalide -> ne fait rien
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ h is none }}"
+        sequence: []
+    default: []
+
+  - choose:
+      # 1) Trop humide -> OFF
+      - conditions:
+          - condition: template
+            value_template: "{{ (h | float) > ((target | float) + (off_high | float)) }}"
+        sequence:
+          - service: humidifier.turn_off
+            target:
+              entity_id: "{{ humidifier }}"
+
+      # 2) Trop sec -> ON + mist adapté
+      - conditions:
+          - condition: template
+            value_template: "{{ (h | float) < ((target | float) - (low | float)) }}"
+        sequence:
+          - service: humidifier.turn_on
+            target:
+              entity_id: "{{ humidifier }}"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (mist_cooldown_ok or not is_on) and (current_mist != (mist_calc | int)) }}"
+                sequence:
+                  - service: number.set_value
+                    target:
+                      entity_id: "{{ mist_entity }}"
+                    data:
+                      value: "{{ mist_calc | int }}"
+
+      # 3) Zone stable (jusqu'à cible + hold_high) -> ON + mist min
+      - conditions:
+          - condition: template
+            value_template: "{{ (h | float) <= ((target | float) + (hold_high | float)) }}"
+        sequence:
+          - service: humidifier.turn_on
+            target:
+              entity_id: "{{ humidifier }}"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (mist_cooldown_ok or not is_on) and (current_mist != (mist_min | int)) }}"
+                sequence:
+                  - service: number.set_value
+                    target:
+                      entity_id: "{{ mist_entity }}"
+                    data:
+                      value: "{{ mist_min | int }}"
+
+    default: []
