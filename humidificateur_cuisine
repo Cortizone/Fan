@@ -1,246 +1,81 @@
 blueprint:
-  name: "Humidificateur VeSync (capteur externe) - Cible + mist adaptive (stable)"
-  description: >
-    Contrôle un humidificateur VeSync (Classic300S) via capteur d'humidité externe (ex: moyenne).
-    ON + mist adaptée si trop sec, mist min près de la cible, OFF si trop humide.
-    Anti-flapping via délai min entre changements de mist.
+  name: Humidificateur adaptatif (capteur externe)
+  description: >-
+    Pilote un humidificateur VeSync Classic300S avec un capteur externe. Active
+    ou désactive l'humidificateur et règle le niveau de brume selon l'humidité mesurée.
   domain: automation
-
   input:
-    humidifier_entity:
-      name: "Humidificateur (entity humidifier)"
-      selector:
-        entity:
-          domain: humidifier
-
-    mist_level_entity:
-      name: "Mist level (number) de l'humidificateur"
-      description: "Exemple: number.cuisine_humidificateur_mist_level"
-      selector:
-        entity:
-          domain: number
-
-    humidity_sensor:
-      name: "Capteur d'humidité externe (peut être une moyenne)"
+    capteur_humidite:
+      name: Capteur d'humidité
+      description: Capteur d'humidité externe (entité sensor).
       selector:
         entity:
           domain: sensor
-
-    humidity_target:
-      name: "Cible humidité (%)"
+    humidificateur:
+      name: Humidificateur VeSync
+      description: Entité humidificateur VeSync Classic300S.
+      selector:
+        entity:
+          domain: humidifier
+    humidite_cible:
+      name: Humidité cible (%)
+      description: Valeur cible d'humidité relative à maintenir.
       default: 45
       selector:
         number:
-          min: 25
-          max: 70
-          mode: slider
-          step: 1
-
-    band_low:
-      name: "Seuil bas (cible - X) => accélère"
-      default: 1.0
+          min: 0
+          max: 100
+          unit_of_measurement: '%'
+    tolerance_basse:
+      name: Écart bas (%)
+      description: Seuil en-dessous de la cible pour augmenter la vitesse.
+      default: 2
       selector:
         number:
           min: 0
-          max: 5
-          mode: slider
-          step: 0.5
-
-    band_hold_high:
-      name: "Zone stable (cible + X) => mist min (reste ON)"
-      default: 0.5
-      selector:
-        number:
-          min: 0
-          max: 5
-          mode: slider
-          step: 0.5
-
-    band_off_high:
-      name: "Seuil OFF (cible + X) => OFF"
-      default: 1.5
-      selector:
-        number:
-          min: 0
-          max: 10
-          mode: slider
-          step: 0.5
-
-    mist_min:
-      name: "Mist minimum (exemple 1)"
-      default: 1
-      selector:
-        number:
-          min: 0
-          max: 10
-          step: 1
-          mode: slider
-
-    mist_max:
-      name: "Mist maximum (exemple 9)"
-      default: 9
-      selector:
-        number:
-          min: 1
-          max: 10
-          step: 1
-          mode: slider
-
-    min_change_minutes:
-      name: "Délai min entre changements de mist (minutes)"
-      default: 3
-      selector:
-        number:
-          min: 0
-          max: 30
-          mode: slider
-          step: 1
-
-    poll_minutes:
-      name: "Vérification périodique (minutes)"
+          max: 100
+          unit_of_measurement: '%'
+    tolerance_haute:
+      name: Écart haut (%)
+      description: Seuil au-dessus de la cible pour arrêter l'humidificateur.
       default: 5
       selector:
         number:
-          min: 1
-          max: 15
-          mode: slider
-          step: 1
-
-mode: restart
-
+          min: 0
+          max: 100
+          unit_of_measurement: '%'
+    delai_anti_flapping:
+      name: Délai anti-flapping
+      description: Durée minimale entre changements d'état pour éviter les oscillations.
+      default: 00:05:00
+      selector:
+        duration: {}
 trigger:
   - platform: state
-    entity_id: !input humidity_sensor
-  - platform: time_pattern
-    minutes: "/1"
-
-variables:
-  humidifier: !input humidifier_entity
-  mist_entity: !input mist_level_entity
-  hum_sensor: !input humidity_sensor
-
-  target: !input humidity_target
-  low: !input band_low
-  hold_high: !input band_hold_high
-  off_high: !input band_off_high
-
-  mist_min_in: !input mist_min
-  mist_max_in: !input mist_max
-
-  min_change: !input min_change_minutes
-  poll: !input poll_minutes
-
-  h_raw: "{{ states(hum_sensor) }}"
-  h: >-
-    {% if h_raw in ['unknown','unavailable','none',''] %}
-      {{ none }}
-    {% else %}
-      {{ h_raw | float(none) }}
-    {% endif %}
-
-  time_tick_ok: >-
-    {% if trigger.platform != 'time_pattern' %}
-      true
-    {% else %}
-      {{ (now().minute % (poll | int)) == 0 }}
-    {% endif %}
-
-  is_on: "{{ is_state(humidifier, 'on') }}"
-
-  mist_cooldown_ok: >-
-    {% set obj = states[mist_entity] %}
-    {% if obj is none or obj.last_changed is none %}
-      true
-    {% else %}
-      {{ (as_timestamp(now()) - as_timestamp(obj.last_changed)) > (min_change * 60) }}
-    {% endif %}
-
-  current_mist: "{{ states(mist_entity) | float(0) | int }}"
-
-  mist_min: "{{ mist_min_in | int }}"
-  mist_max: "{{ [mist_max_in | int, mist_min_in | int] | max }}"
-
-  diff: >-
-    {% if h is none %}
-      {{ none }}
-    {% else %}
-      {{ (target | float) - (h | float) }}
-    {% endif %}
-
-  mist_calc: >-
-    {% if diff is none %}
-      {{ mist_min }}
-    {% else %}
-      {% set d = diff | float %}
-      {% set span = (mist_max - mist_min) | int %}
-      {% if d >= 6 %}
-        {{ mist_max }}
-      {% elif d >= 4 %}
-        {{ mist_min + (span * 0.75) | round(0, 'half_up') | int }}
-      {% elif d >= 2 %}
-        {{ mist_min + (span * 0.50) | round(0, 'half_up') | int }}
-      {% elif d >= 1 %}
-        {{ mist_min + (span * 0.25) | round(0, 'half_up') | int }}
-      {% else %}
-        {{ mist_min }}
-      {% endif %}
-    {% endif %}
-
-condition:
-  - condition: template
-    value_template: "{{ time_tick_ok }}"
-
+    entity_id: !input capteur_humidite
+    # (optionnel : ajouter `for: !input delai_anti_flapping` pour la stabilité)
+condition: []
 action:
+  - variables:
+      target: !input humidite_cible
+      tol_basse: !input tolerance_basse
+      tol_haute: !input tolerance_haute
+      diff: "{{ (target | float) - (trigger.to_state.state | float) }}"
   - choose:
       - conditions:
-          - condition: template
-            value_template: "{{ h is none }}"
-        sequence: []
-    default: []
-
-  - choose:
-      - conditions:
-          - condition: template
-            value_template: "{{ (h | float) > ((target | float) + (off_high | float)) }}"
+          - "{{ diff >= tol_basse }}"
         sequence:
+          - service: humidifier.set_mist_level
+            target: !input humidificateur
+            data:
+              mist_level: 9
+      - conditions:
+          - "{{ diff > - tol_haute }}"
+        sequence:
+          - service: humidifier.set_mist_level
+            target: !input humidificateur
+            data:
+              mist_level: 1
+      - default:
           - service: humidifier.turn_off
-            target:
-              entity_id: "{{ humidifier }}"
-
-      - conditions:
-          - condition: template
-            value_template: "{{ (h | float) < ((target | float) - (low | float)) }}"
-        sequence:
-          - service: humidifier.turn_on
-            target:
-              entity_id: "{{ humidifier }}"
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ (mist_cooldown_ok or not is_on) and (current_mist != (mist_calc | int)) }}"
-                sequence:
-                  - service: number.set_value
-                    target:
-                      entity_id: "{{ mist_entity }}"
-                    data:
-                      value: "{{ mist_calc | int }}"
-
-      - conditions:
-          - condition: template
-            value_template: "{{ (h | float) <= ((target | float) + (hold_high | float)) }}"
-        sequence:
-          - service: humidifier.turn_on
-            target:
-              entity_id: "{{ humidifier }}"
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ (mist_cooldown_ok or not is_on) and (current_mist != (mist_min | int)) }}"
-                sequence:
-                  - service: number.set_value
-                    target:
-                      entity_id: "{{ mist_entity }}"
-                    data:
-                      value: "{{ mist_min | int }}"
-
-    default: []
+            target: !input humidificateur
