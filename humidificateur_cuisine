@@ -1,9 +1,9 @@
 blueprint:
-  name: "VeSync Classic300S (capteur externe) - Cible + mist adaptatif"
+  name: "VeSync Classic300S (capteur externe) - Cible + Mist via number"
   description: >
-    Pilote un humidificateur VeSync via un capteur d'humidité externe (ex: moyenne/median).
-    - Trop sec: ON + mist haut
-    - Près de la cible: ON + mist bas (stable)
+    Pilote un humidificateur VeSync via un capteur d'humidité externe.
+    - Trop sec: ON + mist haut (number)
+    - Près de la cible: ON + mist bas (number)
     - Trop humide: OFF
   domain: automation
 
@@ -15,10 +15,17 @@ blueprint:
           domain: sensor
 
     humidificateur:
-      name: "Humidificateur VeSync"
+      name: "Humidificateur VeSync (entity humidifier)"
       selector:
         entity:
           domain: humidifier
+
+    mist_level:
+      name: "Mist level (entity number)"
+      description: "Exemple: number.cuisine_humidificateur_mist_level"
+      selector:
+        entity:
+          domain: number
 
     humidite_cible:
       name: "Humidité cible (%)"
@@ -54,7 +61,7 @@ blueprint:
           unit_of_measurement: "%"
 
     mist_haut:
-      name: "Mist haut (ex: 9)"
+      name: "Mist haut (exemple 9)"
       default: 9
       selector:
         number:
@@ -64,7 +71,7 @@ blueprint:
           mode: slider
 
     mist_bas:
-      name: "Mist bas (ex: 1)"
+      name: "Mist bas (exemple 1)"
       default: 1
       selector:
         number:
@@ -121,7 +128,6 @@ condition:
     value_template: "{{ time_tick_ok }}"
 
 action:
-  # Si capteur invalide -> on ne fait rien
   - choose:
       - conditions:
           - condition: template
@@ -147,11 +153,11 @@ action:
           - service: humidifier.turn_on
             target:
               entity_id: !input humidificateur
-          - service: humidifier.set_mist_level
+          - service: number.set_value
             target:
-              entity_id: !input humidificateur
+              entity_id: !input mist_level
             data:
-              mist_level: !input mist_haut
+              value: !input mist_haut
 
       # Zone stable -> ON + mist bas
       - conditions:
@@ -163,10 +169,10 @@ action:
           - service: humidifier.turn_on
             target:
               entity_id: !input humidificateur
-          - service: humidifier.set_mist_level
+          - service: number.set_value
             target:
-              entity_id: !input humidificateur
+              entity_id: !input mist_level
             data:
-              mist_level: !input mist_bas
+              value: !input mist_bas
 
     default: []
