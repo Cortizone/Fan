@@ -3,10 +3,10 @@ blueprint:
   description: >
     Contrôle un humidificateur Govee H7140 avec:
     - 2 cibles d'humidité (période active vs hors période)
-    - Plage horaire modifiable (gère aussi si ça traverse minuit)
-    - Mode stable: près de la cible, reste ON à vitesse 1
+    - Plage horaire modifiable (gère si ça traverse minuit)
+    - Près de la cible: reste ON à vitesse 1
     - OFF seulement si dépassement (cible + seuil)
-    - Anti-flapping: délai minimum entre changements de vitesse (basé sur last_changed du number)
+    - Anti-flapping: délai minimum entre changements de vitesse
   domain: automation
 
   input:
@@ -115,7 +115,6 @@ trigger:
     minutes: "/5"
 
 variables:
-  # inputs "propres" (PAS de !input dans les templates)
   humid_sensor: !input humidity_sensor
   humid_switch: !input govee_humidifier_switch
   humid_power: !input govee_humidifier_power
@@ -132,40 +131,45 @@ variables:
 
   min_change: !input min_change_minutes
 
-  # Valeurs courantes
-  h: "{{ states(humid_sensor) | float(0) }}"
+  # Humidité SAFE (si unknown/unavailable => none)
+  h: "{{ states(humid_sensor) | float(none) }}"
+
   current_speed: "{{ states(humid_power) | float(0) | int }}"
   is_on: "{{ is_state(humid_switch, 'on') }}"
 
-  # Plage qui traverse minuit ?
-  crosses_midnight: "{{ start > end }}"
-
-  # Dans la période active ?
+  # ✅ Période active robuste (gère minuit)
   is_active: >-
-    {% set now_t = now().strftime('%H:%M:%S') %}
-    {% if not crosses_midnight %}
-      {{ now_t >= start and now_t < end }}
+    {% set s = strptime(start, '%H:%M:%S').time() %}
+    {% set e = strptime(end, '%H:%M:%S').time() %}
+    {% set n = now().time() %}
+    {% if s < e %}
+      {{ s <= n < e }}
     {% else %}
-      {{ now_t >= start or now_t < end }}
+      {{ n >= s or n < e }}
     {% endif %}
 
-  # Cible selon la période
   target: "{{ (target_active if is_active else target_inactive) | float }}"
 
-  # Écart cible-humidité
-  diff: "{{ (target - h) | float }}"
-
-  # Vitesse par paliers (stable)
-  speed_calc: >-
-    {% set d = diff %}
-    {% if d >= 6 %} 8
-    {% elif d >= 4 %} 6
-    {% elif d >= 2 %} 4
-    {% elif d >= 1 %} 2
-    {% else %} 1
+  diff: >-
+    {% if h is none %}
+      {{ none }}
+    {% else %}
+      {{ (target - h) | float }}
     {% endif %}
 
-  # Anti-flapping: délai min basé sur last_changed du number (vitesse)
+  speed_calc: >-
+    {% if diff is none %}
+      1
+    {% else %}
+      {% set d = diff %}
+      {% if d >= 6 %} 8
+      {% elif d >= 4 %} 6
+      {% elif d >= 2 %} 4
+      {% elif d >= 1 %} 2
+      {% else %} 1
+      {% endif %}
+    {% endif %}
+
   speed_cooldown_ok: >-
     {% set last = states[humid_power].last_changed %}
     {% if last is none %}
@@ -175,8 +179,15 @@ variables:
     {% endif %}
 
 action:
+  # ✅ Si le capteur est invalid => ne fait rien
   - choose:
-      # 1) Trop humide -> OFF
+      - conditions:
+          - condition: template
+            value_template: "{{ h is none }}"
+        sequence: []
+    default: []
+
+  - choose:
       - conditions:
           - condition: template
             value_template: "{{ h > (target + off_high) }}"
@@ -185,7 +196,6 @@ action:
             target:
               entity_id: "{{ humid_switch }}"
 
-      # 2) En bas de (cible - low) -> ON + vitesse adaptative
       - conditions:
           - condition: template
             value_template: "{{ h < (target - low) }}"
@@ -195,7 +205,6 @@ action:
               entity_id: "{{ humid_switch }}"
           - choose:
               - conditions:
-                  # Change la vitesse si cooldown OK, OU si l'appareil était OFF (force la bonne vitesse au démarrage)
                   - condition: template
                     value_template: "{{ (speed_cooldown_ok or not is_on) and (current_speed != (speed_calc | int)) }}"
                 sequence:
@@ -205,7 +214,6 @@ action:
                     data:
                       value: "{{ speed_calc | int }}"
 
-      # 3) Zone proche / stable (jusqu'à cible + hold_high) -> ON + vitesse 1
       - conditions:
           - condition: template
             value_template: "{{ h <= (target + hold_high) }}"
@@ -224,7 +232,6 @@ action:
                     data:
                       value: 1
 
-      # 4) Entre (cible + hold_high) et (cible + off_high) -> ON + vitesse 1 (sans spam)
       - conditions:
           - condition: template
             value_template: "{{ h > (target + hold_high) and h <= (target + off_high) }}"
